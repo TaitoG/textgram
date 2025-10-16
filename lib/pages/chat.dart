@@ -9,6 +9,9 @@ class ChatScreen extends StatefulWidget {
   final Function(int) onLongPressMessage;
   final VoidCallback onCancelReply;
 
+  final Function(int, String)? onEditMessage;
+  final Function(int)? onDeleteMessage;
+
   const ChatScreen({
     Key? key,
     required this.messageIds,
@@ -18,6 +21,8 @@ class ChatScreen extends StatefulWidget {
     required this.onSendMessage,
     required this.onLongPressMessage,
     required this.onCancelReply,
+    this.onEditMessage,
+    this.onDeleteMessage,
   }) : super(key: key);
 
   @override
@@ -26,6 +31,8 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController messageController = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+  int? _editingMessageId;
 
   String _getMessageText(Map<String, dynamic> msg) {
     final content = msg['content'];
@@ -40,11 +47,113 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _showMessageMenu(BuildContext context, int messageId, Map<String, dynamic> msg) {
+    final isOutgoing = msg['is_outgoing'] ?? false;
+
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(Icons.reply),
+              title: Text('Ответить'),
+              onTap: () {
+                Navigator.pop(context);
+                widget.onLongPressMessage(messageId);
+              },
+            ),
+            if (isOutgoing && widget.onEditMessage != null) ...[
+              ListTile(
+                leading: Icon(Icons.edit),
+                title: Text('Редактировать'),
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    _editingMessageId = messageId;
+                    messageController.text = _getMessageText(msg);
+                  });
+
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _focusNode.requestFocus();
+                  });
+                },
+              ),
+            ],
+            if (isOutgoing && widget.onDeleteMessage != null) ...[
+              ListTile(
+                leading: Icon(Icons.delete, color: Colors.red),
+                title: Text('Удалить', style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  _confirmDelete(context, messageId);
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context, int messageId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Удалить сообщение?'),
+        content: Text('Это действие нельзя отменить'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              if (widget.onDeleteMessage != null) {
+                widget.onDeleteMessage!(messageId);
+              } else {
+                // если нет колбэка — можно логировать или показать Snack
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('onDeleteMessage не реализован')),
+                );
+              }
+            },
+            child: Text('Удалить', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleSendOrEdit() {
+    final text = messageController.text.trim();
+    if (text.isEmpty) return;
+
+    if (_editingMessageId != null) {
+      if (widget.onEditMessage != null) {
+        widget.onEditMessage!(_editingMessageId!, text);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('onEditMessage не реализован')),
+        );
+      }
+      setState(() {
+        _editingMessageId = null;
+      });
+    } else {
+      widget.onSendMessage(text);
+    }
+
+    messageController.clear();
+    FocusScope.of(context).unfocus();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // Индикатор реплая
         if (widget.replyToMessageId != null && widget.messagesMap.containsKey(widget.replyToMessageId))
           Container(
             padding: EdgeInsets.all(8),
@@ -104,7 +213,10 @@ class _ChatScreenState extends State<ChatScreen> {
               }
 
               return GestureDetector(
-                onLongPress: () => widget.onLongPressMessage(msgId),
+                onTap: () {
+                  // можно использовать обычный тап для показа деталей/реакций
+                },
+                onLongPress: () => _showMessageMenu(context, msgId, msg),
                 child: Align(
                   alignment: isOutgoing ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
@@ -165,30 +277,26 @@ class _ChatScreenState extends State<ChatScreen> {
             },
           ),
         ),
+        // Input
         Padding(
           padding: const EdgeInsets.all(8.0),
           child: Row(
             children: [
               Expanded(
                 child: TextField(
+                  focusNode: _focusNode,
                   controller: messageController,
                   decoration: InputDecoration(
-                    hintText: 'Введите сообщение...',
+                    hintText: _editingMessageId != null ? 'Редактирование сообщения...' : 'Введите сообщение...',
                     border: OutlineInputBorder(),
                   ),
-                  onSubmitted: (text) {
-                    widget.onSendMessage(text);
-                    messageController.clear();
-                  },
+                  onSubmitted: (_) => _handleSendOrEdit(),
                 ),
               ),
               SizedBox(width: 8),
               IconButton(
-                icon: Icon(Icons.send),
-                onPressed: () {
-                  widget.onSendMessage(messageController.text);
-                  messageController.clear();
-                },
+                icon: Icon(_editingMessageId != null ? Icons.check : Icons.send),
+                onPressed: _handleSendOrEdit,
               ),
             ],
           ),
@@ -200,6 +308,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     messageController.dispose();
+    _focusNode.dispose();
     super.dispose();
   }
 }

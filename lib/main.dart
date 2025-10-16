@@ -21,6 +21,7 @@ class _MyAppState extends State<MyApp> {
   AppState appState = AppState.loading;
   String status = 'Подключение к TDLib...';
   List<Chat> chats = [];
+  List<ChatStatus> chatsStatus = [];
   Map<int, String> users = {};
   Chat? selectedChat;
 
@@ -42,15 +43,16 @@ class _MyAppState extends State<MyApp> {
         });
         return;
       }
-
+      tdLibService.setLogVerbLvl(2);
       final dir = Directory('./td_db');
       if (!await dir.exists()) {
         await dir.create(recursive: true);
       }
-      chatsFile = File('${dir.path}/td_chats.json');
-      await _loadLocalChats();
+      final tdlibParams = tdLibService.getTdlibParameters();
+      tdLibService.send(tdlibParams);
+      setState(() => status = 'Отправили параметры TDLib');
 
-      _listenToUpdates();
+      _listenToUpdates(tdlibParams);
     } catch (e) {
       setState(() {
         status = 'Ошибка загрузки TDLib: $e';
@@ -58,9 +60,7 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  void _listenToUpdates() async {
-    final tdlibParams = tdLibService.getTdlibParameters();
-
+  void _listenToUpdates(Map<String, dynamic> tdlibParams) async {
     await for (final data in tdLibService.startReceiver()) {
       _handleUpdate(data, tdlibParams);
     }
@@ -69,7 +69,6 @@ class _MyAppState extends State<MyApp> {
   void _handleUpdate(Map<String, dynamic> data, Map<String, dynamic> tdlibParams) {
     try {
       final type = data['@type'];
-
       if (type == 'updateAuthorizationState') {
         _handleAuthorizationState(data, tdlibParams);
       } else if (type == 'updateNewChat') {
@@ -84,6 +83,20 @@ class _MyAppState extends State<MyApp> {
         _handleMessageContentUpdate(data);
       } else if (type == 'updateDeleteMessages') {
         _handleDeleteMessages(data);
+      } else if (type == 'updateSupergroup') {
+        final s = data['supergroup']['status']['@type'];
+        final cid = data['supergroup']['id'];
+        final normalizedId = -100 * 10000000000 - cid;
+        final index = chatsStatus.indexWhere((c) => c.chat_id == cid);
+        final chat = ChatStatus(
+            chat_id: normalizedId.toInt(),
+            status: s
+        );
+        if (index >= 0) {
+          chatsStatus[index] = chat;
+        } else {
+          chatsStatus.add(chat);
+        }
       } else if (type == 'messages') {
         _handleMessagesHistory(data['messages']);
       } else if (type == 'user') {
@@ -100,10 +113,7 @@ class _MyAppState extends State<MyApp> {
   void _handleAuthorizationState(Map<String, dynamic> data, Map<String, dynamic> tdlibParams) {
     final state = data['authorization_state']['@type'];
 
-    if (state == 'authorizationStateWaitTdlibParameters') {
-      tdLibService.send(tdlibParams);
-      setState(() => status = 'Отправили параметры TDLib');
-    } else if (state == 'authorizationStateWaitPhoneNumber') {
+    if (state == 'authorizationStateWaitPhoneNumber') {
       setState(() {
         appState = AppState.waitingPhone;
         status = 'Введите номер телефона';
@@ -248,44 +258,23 @@ class _MyAppState extends State<MyApp> {
     }
   }
 
-  Future<void> _saveLocalChats() async {
-    try {
-      final data = chats.map((c) => c.toJson()).toList();
-      await chatsFile.writeAsString(jsonEncode(data));
-    } catch (e) {
-      print('Ошибка сохранения чатов: $e');
-    }
-  }
-
-  Future<void> _loadLocalChats() async {
-    if (await chatsFile.exists()) {
-      try {
-        final jsonStr = await chatsFile.readAsString();
-        final data = jsonDecode(jsonStr);
-        final loaded = (data as List).map((c) => Chat.fromJson(c)).toList();
-        setState(() {
-          chats = loaded;
-          _sortChats();
-          if (chats.isNotEmpty) {
-            appState = AppState.chatList;
-            status = 'Загружено локально (${chats.length} чатов)';
-          }
-        });
-      } catch (e) {
-        print('Ошибка загрузки чатов: $e');
-      }
-    }
-  }
-
   void _sortChats() {
     chats.sort((a, b) => b.lastMessageDate.compareTo(a.lastMessageDate));
+  }
+
+  bool _isChatMember(int chat_id) {
+    return chatsStatus.any(
+          (c) => c.chat_id == chat_id && c.status != 'chatMemberStatusLeft',
+    );
   }
 
   void _addOrUpdateChat(Map<String, dynamic> chatData) {
     try {
       final id = chatData['id'];
       if (id == null) return;
-
+      if (chatData['type']['@type'] == 'chatTypeSupergroup') {
+        if (!_isChatMember(id)) return;
+    }
       final title = chatData['title'] ?? 'Без названия';
       String lastMsg = 'Нет сообщений';
       int lastMsgDate = 0;
@@ -301,14 +290,13 @@ class _MyAppState extends State<MyApp> {
           }
         }
       }
-
       setState(() {
         final index = chats.indexWhere((c) => c.id == id);
         final chat = Chat(
           id: id,
           title: title,
           lastMessage: lastMsg,
-          lastMessageDate: lastMsgDate,
+          lastMessageDate: lastMsgDate
         );
         if (index >= 0) {
           chats[index] = chat;
@@ -317,7 +305,6 @@ class _MyAppState extends State<MyApp> {
         }
         _sortChats();
       });
-      _saveLocalChats();
     } catch (e) {
       print('Ошибка при добавлении чата: $e');
     }
@@ -350,7 +337,6 @@ class _MyAppState extends State<MyApp> {
           _sortChats();
         }
       });
-      _saveLocalChats();
     } catch (e) {
       print('Ошибка при обновлении сообщения чата: $e');
     }
@@ -417,11 +403,11 @@ class _MyAppState extends State<MyApp> {
       case AppState.waitingPhone:
       case AppState.waitingCode:
       case AppState.waitingPassword:
-        return 'TDLib Login';
+        return 'Textgram';
       case AppState.chatList:
-        return 'Чаты';
+        return 'Chats';
       case AppState.chat:
-        return selectedChat?.title ?? 'Чат';
+        return selectedChat?.title ?? 'Chat';
     }
   }
 
@@ -459,6 +445,12 @@ class _MyAppState extends State<MyApp> {
             setState(() {
               replyToMessageId = null;
             });
+          },
+          onEditMessage: (msgId, txt) {
+            tdLibService.editMsg(selectedChat!.id, msgId, txt);
+          },
+          onDeleteMessage: (msgId) {
+            tdLibService.deleteMsg(selectedChat!.id, [msgId]);
           },
         );
     }

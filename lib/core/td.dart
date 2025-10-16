@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io';
 import 'package:ffi/ffi.dart';
+import 'package:path/path.dart';
 
 typedef TdJsonClientCreateNative = Pointer<Void> Function();
 typedef TdJsonClientSendNative = Void Function(Pointer<Void>, Pointer<Utf8>);
@@ -84,11 +86,17 @@ class TdLibService {
       'system_language_code': 'en',
       'device_model': 'Desktop',
       'system_version': 'Linux',
-      'application_version': '0.0.1',
+      'application_version': '0.0.2',
       'enable_storage_optimizer': true
     };
   }
+  void setLogVerbLvl(int lvl) {
+    send({'@type': 'setLogVerbosityLevel',
+      'new_verbosity_level': lvl
+    });
+  }
 
+  // AUTH
   void sendPhoneNumber(String phone) {
     send({
       '@type': 'setAuthenticationPhoneNumber',
@@ -110,6 +118,14 @@ class TdLibService {
     });
   }
 
+  // CHATS
+  void loadChat(int chatId) {
+    send({
+      '@type': 'getChat',
+      'chat_id': chatId
+    });
+  }
+
   void loadChats({int limit = 5}) {
     send({
       '@type': 'getChats',
@@ -117,16 +133,39 @@ class TdLibService {
     });
   }
 
-  void loadChatHistory(int chatId, {int limit = 50}) {
+  void loadChatHistory(int chatId, {int limit = 20}) {
     send({
       '@type': 'getChatHistory',
       'chat_id': chatId,
       'from_message_id': 0,
       'limit': limit,
-      'offset': -10,
+      'offset': 0,
       'only_local': false,
     });
   }
+  void joinChat(int chatId) {
+    send({
+      '@type': 'joinChat',
+      'chat_id': chatId
+    });
+  }
+
+  void leaveChat(int chatId) {
+    send({
+      '@type': 'leaveChat',
+      'chat_id': chatId
+    });
+  }
+
+  void getMember(int chatId, int userId) {
+    send({
+      '@type': 'getChatMember',
+      'chat_id': chatId,
+      'user_id': userId
+    });
+  }
+
+  // MESSAGES MESSAGES MESSAGES
 
   void sendMessage(int chatId, String text, {int? replyToMessageId}) {
     final messageData = {
@@ -156,6 +195,30 @@ class TdLibService {
     });
   }
 
+  void deleteMsg(int chatId, List<int> msgIds, {bool revoke = true}) {
+    send({
+      '@type': 'deleteMessages',
+      'chat_id': chatId,
+      'message_ids': msgIds,
+      'revoke': revoke
+    });
+  }
+
+  void editMsg(int chatId, int msgId, String text) {
+    send({
+      '@type': 'editMessageText',
+      'chat_id': chatId,
+      'message_id': msgId,
+      'input_message_content': {
+        '@type': 'inputMessageText',
+        'text': {
+          '@type': 'formattedText',
+          'text': text
+        }
+      }
+    });
+  }
+  // USERS
   void loadUser(int userId) {
     send({
       '@type': 'getUser',

@@ -8,6 +8,46 @@ class Chat {
     required this.id,
     required this.title,
     required this.lastMessage,
-    required this.lastMessageDate,
+    required this.lastMessageDate
   });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'lastMessage': lastMessage,
+      'lastMessageDate': lastMessageDate,
+    };
+  }
+
+  factory Chat.fromJson(Map<String, dynamic> json) {
+    return Chat(
+      id: json['id'],
+      title: json['title'],
+      lastMessage: json['lastMessage'],
+      lastMessageDate: json['lastMessageDate'] ?? 0,
+    );
+  }
+}
+
+class ChatStatus {
+  final int chat_id;
+  final String status;
+
+  ChatStatus({
+    required this.chat_id,
+    required this.status
+});
+  Map<String, dynamic> toJson() {
+    return {
+      'chat_id': chat_id,
+      'status': status
+    };
+  }
+  factory ChatStatus.fromJson(Map<String, dynamic> json) {
+    return ChatStatus(
+      chat_id: json['chat_id'],
+      status: json['status']
+    );
+  }
 }
