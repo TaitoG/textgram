@@ -3,7 +3,7 @@ import 'package:textgram/models/models.dart';
 import 'package:provider/provider.dart';
 import 'package:textgram/core/app_controller.dart';
 import 'package:textgram/widgets/app_theme.dart';
-import 'package:textgram/widgets/modalmenu.dart';
+import 'package:textgram/widgets/widgets.dart' show MessageMenu, MenuAction, ChatListItem;
 
 class ChatListScreen extends StatelessWidget {
   final List<Chat> chats;
@@ -120,82 +120,11 @@ class ChatListScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               final chat = chats[index];
               final timeStr = _formatMessageTime(chat.lastMessageDate);
-              return InkWell(
-                onTap: () => onChatTap(chat),
-                onLongPress: () => _showMessageMenu(context, chat),
-                splashColor: terminalGreen.withOpacity(0.1),
-                highlightColor: terminalGreen.withOpacity(0.05),
-                child: Container(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      bottom: BorderSide(
-                        color: terminalDarkGreen.withOpacity(0.3),
-                        width: 1,
-                      ),
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Terminal prompt style prefix
-                      Text(
-                        '> ',
-                        style: TextStyle(
-                          fontFamily: 'JetBrains',
-                          fontSize: 16,
-                          color: terminalGreen,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    chat.title.toUpperCase(),
-                                    style: TextStyle(
-                                      fontFamily: 'JetBrains',
-                                      fontSize: 14,
-                                      color: terminalGreen,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 1.5,
-                                    ),
-                                  ),
-                                ),
-                                if (timeStr.isNotEmpty)
-                                  Text(
-                                    '[$timeStr]',
-                                    style: TextStyle(
-                                      fontFamily: 'JetBrains',
-                                      fontSize: 11,
-                                      color: terminalDarkGreen,
-                                      letterSpacing: 1.2,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            SizedBox(height: 4),
-                            Text(
-                              chat.lastMessage,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontFamily: 'JetBrains',
-                                fontSize: 12,
-                                color: terminalDarkGreen,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              return ChatListItem(
+                chat: chat,
+                timeStr: timeStr,
+                onTap: onChatTap,
+                onLongPress: _showMessageMenu,
               );
             },
           ),
