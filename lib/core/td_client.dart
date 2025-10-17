@@ -84,10 +84,16 @@ class TdLibService {
       'system_language_code': 'en',
       'device_model': 'Desktop',
       'system_version': 'Linux',
-      'application_version': '0.0.1',
+      'application_version': '0.0.4',
       'enable_storage_optimizer': true
     };
   }
+  void setLogVerbLvl(int lvl) {
+    send({'@type': 'setLogVerbosityLevel',
+      'new_verbosity_level': lvl
+    });
+  }
+
   // AUTH
   void sendPhoneNumber(String phone) {
     send({
@@ -110,6 +116,12 @@ class TdLibService {
     });
   }
 
+  void logOut(){
+    send({
+      '@type': 'logOut'
+    });
+  }
+
   // CHATS
   void loadChat(int chatId) {
     send({
@@ -121,7 +133,6 @@ class TdLibService {
   void loadChats({int limit = 5}) {
     send({
       '@type': 'getChats',
-      'chat_list': {'@type:': 'chatListMain'},
       'limit': limit,
     });
   }
@@ -142,15 +153,34 @@ class TdLibService {
       'chat_id': chatId
     });
   }
-
+  void joinChatByLink(String url) {
+    send({
+      '@type': 'joinChatByInviteLink',
+      'invite_link': url
+    });
+  }
   void leaveChat(int chatId) {
     send({
       '@type': 'leaveChat',
       'chat_id': chatId
     });
   }
+  void deleteChat(int chatId) {
+    send({
+      '@type': 'deleteChat',
+      'chat_id': chatId
+    });
+  }
+  void getMember(int chatId, int userId) {
+    send({
+      '@type': 'getChatMember',
+      'chat_id': chatId,
+      'user_id': userId
+    });
+  }
 
-  // MESSAGES
+  // MESSAGES MESSAGES MESSAGES
+
   void sendMessage(int chatId, String text, {int? replyToMessageId}) {
     final messageData = {
       '@type': 'sendMessage',
@@ -190,7 +220,7 @@ class TdLibService {
 
   void editMsg(int chatId, int msgId, String text) {
     send({
-      '@type': 'editMessage',
+      '@type': 'editMessageText',
       'chat_id': chatId,
       'message_id': msgId,
       'input_message_content': {
@@ -202,7 +232,6 @@ class TdLibService {
       }
     });
   }
-
   // USERS
   void loadUser(int userId) {
     send({

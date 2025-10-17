@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:textgram/core/app_controller.dart';
+import 'package:provider/provider.dart';
+import 'package:textgram/widgets/widgets.dart' hide AppBodyWidget, AppBarWidget;
 
 class ChatScreen extends StatefulWidget {
   final List<int> messageIds;
@@ -31,6 +34,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController messageController = TextEditingController();
+  final AppController appController = AppController();
   final FocusNode _focusNode = FocusNode();
   int? _editingMessageId;
 
@@ -47,80 +51,107 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  bool _isInviteLink(String text) {
+    return text.contains(RegExp(r't\.me/[+\w]+')) ||
+        text.contains('joinchat');
+  }
+
+  void _showJoinMenu(BuildContext context, String inviteLink) {
+    final actions = [
+      MenuAction(
+          icon: '✅',
+          label: 'JOIN CHAT',
+          color: terminalGreen,
+          onTap: (ctx) {
+            final appController = Provider.of<AppController>(ctx, listen: false);
+            appController.joinChatByInvite(inviteLink);
+          }),
+    ];
+    MessageMenu.show(context, actions, title: '[ INVITE LINK ]');
+  }
+
   void _showMessageMenu(BuildContext context, int messageId, Map<String, dynamic> msg) {
     final isOutgoing = msg['is_outgoing'] ?? false;
-
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(Icons.reply),
-              title: Text('Ответить'),
-              onTap: () {
-                Navigator.pop(context);
-                widget.onLongPressMessage(messageId);
-              },
-            ),
-            if (isOutgoing && widget.onEditMessage != null) ...[
-              ListTile(
-                leading: Icon(Icons.edit),
-                title: Text('Редактировать'),
-                onTap: () {
-                  Navigator.pop(context);
-                  setState(() {
-                    _editingMessageId = messageId;
-                    messageController.text = _getMessageText(msg);
-                  });
-
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (mounted) _focusNode.requestFocus();
-                  });
-                },
-              ),
-            ],
-            if (isOutgoing && widget.onDeleteMessage != null) ...[
-              ListTile(
-                leading: Icon(Icons.delete, color: Colors.red),
-                title: Text('Удалить', style: TextStyle(color: Colors.red)),
-                onTap: () {
-                  Navigator.pop(context);
-                  _confirmDelete(context, messageId);
-                },
-              ),
-            ],
-          ],
-        ),
+    final actions = [
+      MenuAction(
+        icon: '>',
+        label: 'REPLY',
+        color: terminalGreen,
+        onTap: (ctx) => widget.onLongPressMessage(messageId),
       ),
-    );
+      if (isOutgoing && widget.onEditMessage != null)
+        MenuAction(
+          icon: '>',
+          label: 'EDIT',
+          color: terminalGreen,
+          onTap: (ctx) {
+            setState(() {
+              _editingMessageId = messageId;
+              messageController.text = _getMessageText(msg);
+            });
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) _focusNode.requestFocus();
+            });
+          },
+        ),
+      if (isOutgoing && widget.onDeleteMessage != null)
+        MenuAction(
+          icon: '>',
+          label: 'DELETE',
+          color: Colors.red[400]!,
+          onTap: (ctx) => _confirmDelete(context, messageId),
+        ),
+    ];
+    MessageMenu.show(context, actions);
   }
+
 
   void _confirmDelete(BuildContext context, int messageId) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Удалить сообщение?'),
-        content: Text('Это действие нельзя отменить'),
+        backgroundColor: terminalBackground,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(4),
+          side: BorderSide(color: terminalGreen, width: 2),
+        ),
+        title: Text(
+          '[ ! WARNING ! ]',
+          style: TextStyle(
+            fontFamily: 'JetBrains',
+            color: Colors.red[400],
+            fontSize: 14,
+            letterSpacing: 1.5,
+          ),
+        ),
+        content: Text(
+          'ARE YOU SURE YOU WANT\n\nTO DELETE THIS MESSAGE?',
+          style: TextStyle(
+            fontFamily: 'JetBrains',
+            color: terminalGreen,
+            fontSize: 12,
+            letterSpacing: 1,
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text('Отмена'),
+            child: Text(
+              '[ CANCEL ]',
+              style: TextStyle(fontFamily: 'JetBrains', color: terminalGreen),
+            ),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(context);
               if (widget.onDeleteMessage != null) {
                 widget.onDeleteMessage!(messageId);
-              } else {
-                // если нет колбэка — можно логировать или показать Snack
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('onDeleteMessage не реализован')),
-                );
               }
             },
-            child: Text('Удалить', style: TextStyle(color: Colors.red)),
+            child: Text(
+              '[ DELETE ]',
+              style: TextStyle(fontFamily: 'JetBrains', color: Colors.red[400]),
+            ),
           ),
         ],
       ),
@@ -134,10 +165,6 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_editingMessageId != null) {
       if (widget.onEditMessage != null) {
         widget.onEditMessage!(_editingMessageId!, text);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('onEditMessage не реализован')),
-        );
       }
       setState(() {
         _editingMessageId = null;
@@ -152,156 +179,248 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        if (widget.replyToMessageId != null && widget.messagesMap.containsKey(widget.replyToMessageId))
-          Container(
-            padding: EdgeInsets.all(8),
-            color: Colors.blue[900],
-            child: Row(
-              children: [
-                Icon(Icons.reply, size: 16),
-                SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      color: terminalBackground,
+      child: Stack(
+        children: [
+          // Scanline effect
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: List.generate(
+                      50,
+                          (index) => index.isEven ? scanlineColor : Colors.transparent,
+                    ),
+                    stops: List.generate(50, (index) => index / 50),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Column(
+            children: [
+              // Reply banner
+              if (widget.replyToMessageId != null && widget.messagesMap.containsKey(widget.replyToMessageId))
+                Container(
+                  padding: EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: terminalBackground,
+                    border: Border(
+                      bottom: BorderSide(color: terminalDarkGreen, width: 2),
+                    ),
+                  ),
+                  child: Row(
                     children: [
                       Text(
-                        'Ответ на:',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                        '>>',
+                        style: TextStyle(
+                          fontFamily: 'JetBrains',
+                          color: terminalGreen,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                      Text(
-                        _getMessageText(widget.messagesMap[widget.replyToMessageId]!),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 14),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'REPLY:',
+                              style: TextStyle(
+                                fontFamily: 'JetBrains',
+                                fontSize: 10,
+                                color: terminalDarkGreen,
+                                letterSpacing: 1.2,
+                              ),
+                            ),
+                            Text(
+                              _getMessageText(widget.messagesMap[widget.replyToMessageId]!),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontFamily: 'JetBrains',
+                                fontSize: 12,
+                                color: terminalGreen,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: widget.onCancelReply,
+                        child: Text(
+                          '[X]',
+                          style: TextStyle(
+                            fontFamily: 'JetBrains',
+                            color: Colors.red[400],
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
-                IconButton(
-                  icon: Icon(Icons.close, size: 20),
-                  onPressed: widget.onCancelReply,
-                ),
-              ],
-            ),
-          ),
-        Expanded(
-          child: widget.messageIds.isEmpty
-              ? Center(child: Text('Загрузка сообщений...'))
-              : ListView.builder(
-            reverse: true,
-            itemCount: widget.messageIds.length,
-            itemBuilder: (context, index) {
-              final msgId = widget.messageIds[index];
-              final msg = widget.messagesMap[msgId];
-              if (msg == null) return SizedBox.shrink();
-
-              final text = _getMessageText(msg);
-              final isOutgoing = msg['is_outgoing'] ?? false;
-
-              if (text.isEmpty) return SizedBox.shrink();
-
-              // Проверяем реплай
-              final replyTo = msg['reply_to'];
-              Map<String, dynamic>? repliedMessage;
-              if (replyTo != null && replyTo['@type'] == 'messageReplyToMessage') {
-                final repliedMsgId = replyTo['message_id'];
-                if (repliedMsgId != null) {
-                  repliedMessage = widget.messagesMap[repliedMsgId];
-                }
-              }
-
-              return GestureDetector(
-                onTap: () {
-                  // можно использовать обычный тап для показа деталей/реакций
-                },
-                onLongPress: () => _showMessageMenu(context, msgId, msg),
-                child: Align(
-                  alignment: isOutgoing ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                    padding: EdgeInsets.all(12),
-                    constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.7),
-                    decoration: BoxDecoration(
-                      color: isOutgoing ? Colors.blue[700] : Colors.grey[800],
-                      borderRadius: BorderRadius.circular(12),
+              // Messages
+              Expanded(
+                child: widget.messageIds.isEmpty
+                    ? Center(
+                  child: Text(
+                    '> LOADING DATA..._',
+                    style: TextStyle(
+                      fontFamily: 'JetBrains',
+                      fontSize: 14,
+                      color: terminalGreen,
+                      letterSpacing: 1.2,
                     ),
-                    child: Column(
-                      crossAxisAlignment:
-                      isOutgoing ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-                      children: [
-                        if (!isOutgoing)
-                          Text(
-                            widget.users[(msg['sender_id']?['user_id'] ?? 0)] ?? '...',
-                            style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                  ),
+                )
+                    : ListView.builder(
+                  reverse: true,
+                  itemCount: widget.messageIds.length,
+                  itemBuilder: (context, index) {
+                    final msgId = widget.messageIds[index];
+                    final msg = widget.messagesMap[msgId];
+                    if (msg == null) return SizedBox.shrink();
+
+                    final text = _getMessageText(msg);
+                    final isOutgoing = msg['is_outgoing'] ?? false;
+
+                    if (text.isEmpty) return SizedBox.shrink();
+
+                    // Reply check
+                    final replyTo = msg['reply_to'];
+                    Map<String, dynamic>? repliedMessage;
+                    if (replyTo != null && replyTo['@type'] == 'messageReplyToMessage') {
+                      final repliedMsgId = replyTo['message_id'];
+                      if (repliedMsgId != null) {
+                        repliedMessage = widget.messagesMap[repliedMsgId];
+                      }
+                    }
+
+                    return GestureDetector(
+                      onLongPress: () => _showMessageMenu(context, msgId, msg),
+                      child: Align(
+                        alignment: isOutgoing ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                          padding: EdgeInsets.all(10),
+                          constraints: BoxConstraints(
+                            maxWidth: MediaQuery.of(context).size.width * 0.75,
                           ),
-                        if (repliedMessage != null)
-                          Container(
-                            margin: EdgeInsets.only(bottom: 8),
-                            padding: EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.black26,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border(
-                                left: BorderSide(color: Colors.blue, width: 3),
-                              ),
+                          decoration: BoxDecoration(
+                            color: terminalBackground,
+                            border: Border.all(
+                              color: isOutgoing ? terminalGreen : terminalDarkGreen,
+                              width: 1.5,
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (!isOutgoing)
                                 Text(
-                                  widget.users[(repliedMessage['sender_id']?['user_id'] ?? 0)] ?? 'Пользователь',
+                                  '> ${widget.users[(msg['sender_id']?['user_id'] ?? 0)] ?? 'USER'}',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.blue[300],
-                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'JetBrains',
+                                    fontSize: 10,
+                                    color: terminalDarkGreen,
+                                    letterSpacing: 1.5,
                                   ),
                                 ),
-                                SizedBox(height: 2),
-                                Text(
-                                  _getMessageText(repliedMessage),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 12, color: Colors.grey[300]),
+                              if (_isInviteLink(text)) ...[
+                                Padding(
+                                  padding: EdgeInsets.only(top: 8),
+                                  child: GestureDetector(
+                                    onTap: () => _showJoinMenu(context, text),
+                                    child: Container(
+                                      padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: terminalDarkGreen.withOpacity(0.3),
+                                        border: Border.all(color: terminalGreen, width: 1),
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text('JOIN ', style: TextStyle(fontFamily: 'JetBrains', color: terminalGreen, fontSize: 11)),
+                                          Text('CHAT', style: TextStyle(fontFamily: 'JetBrains', color: terminalGreen, fontSize: 11, fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
                                 ),
                               ],
-                            ),
+                              if (repliedMessage != null)
+                                Container(
+                                  margin: EdgeInsets.only(top: 4, bottom: 8),
+                                  padding: EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black26,
+                                    border: Border(
+                                      left: BorderSide(color: terminalDarkGreen, width: 3),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        '>> ${widget.users[(repliedMessage['sender_id']?['user_id'] ?? 0)] ?? 'USER'}',
+                                        style: TextStyle(
+                                          fontFamily: 'JetBrains',
+                                          fontSize: 10,
+                                          color: terminalDarkGreen,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      SizedBox(height: 2),
+                                      Text(
+                                        _getMessageText(repliedMessage),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontFamily: 'JetBrains',
+                                          fontSize: 11,
+                                          color: terminalDarkGreen.withOpacity(0.8),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              Text(
+                                text,
+                                style: TextStyle(
+                                  fontFamily: 'JetBrains',
+                                  fontSize: 13,
+                                  color: terminalGreen,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
                           ),
-                        Text(text),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-        // Input
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  focusNode: _focusNode,
-                  controller: messageController,
-                  decoration: InputDecoration(
-                    hintText: _editingMessageId != null ? 'Редактирование сообщения...' : 'Введите сообщение...',
-                    border: OutlineInputBorder(),
-                  ),
-                  onSubmitted: (_) => _handleSendOrEdit(),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
-              SizedBox(width: 8),
-              IconButton(
-                icon: Icon(_editingMessageId != null ? Icons.check : Icons.send),
-                onPressed: _handleSendOrEdit,
+              ChatInput(
+                controller: messageController,
+                focusNode: _focusNode,
+                onSubmitted: (_) => _handleSendOrEdit(),
+                onSend: _handleSendOrEdit,
+                isEditing: _editingMessageId != null,
               ),
             ],
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
