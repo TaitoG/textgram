@@ -153,7 +153,7 @@ class TdLibService {
       'use_message_database': true,
       'use_secret_chats': true,
       'api_id': API_ID,
-      'REMOVED': API_HASH,
+      'api hash': API_HASH,
       'system_language_code': 'en',
       'device_model': 'Textgram',
       'system_version': 'Android',
