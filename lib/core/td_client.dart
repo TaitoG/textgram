@@ -1,5 +1,7 @@
+//td_client.dart
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io';
 import 'package:ffi/ffi.dart';
 
 typedef TdJsonClientCreateNative = Pointer<Void> Function();
@@ -20,6 +22,7 @@ class TdLibService {
   late TdJsonClientDestroy clientDestroy;
 
   bool initialize() {
+    print('Текущая папка: ${Directory.current.path}');
     try {
       tdlib = DynamicLibrary.open('tdlib/libtdjson.so');
       final clientCreate = tdlib.lookupFunction<TdJsonClientCreateNative, TdJsonClientCreate>('td_json_client_create');
@@ -73,8 +76,6 @@ class TdLibService {
     return {
       '@type': 'setTdlibParameters',
       'use_test_dc': false,
-      'database_directory': './td_db',
-      'files_directory': './td_files',
       'use_file_database': true,
       'use_chat_info_database': true,
       'use_message_database': true,
@@ -82,8 +83,8 @@ class TdLibService {
       'api_id': REMOVED,
       'REMOVED': 'REMOVED',
       'system_language_code': 'en',
-      'device_model': 'Desktop',
-      'system_version': 'Linux',
+      'device_model': 'Textgram',
+      'system_version': 'Android',
       'application_version': '0.0.4',
       'enable_storage_optimizer': true
     };
@@ -237,6 +238,20 @@ class TdLibService {
     send({
       '@type': 'getUser',
       'user_id': userId
+    });
+  }
+
+  Future<void> start() async {
+    print('🚀 STARTING TDLib...');
+    if (!initialize()) {
+      print('❌ TDLib init failed');
+      return;
+    }
+    await Future.delayed(Duration(milliseconds: 100));
+    setLogVerbLvl(1);
+    final params = getTdlibParameters();
+    send(params);
+    startReceiver().listen((update) {
     });
   }
 }

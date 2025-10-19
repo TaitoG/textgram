@@ -5,6 +5,7 @@ import 'package:textgram/models/models.dart';
 import 'package:textgram/pages/pages.dart';
 import 'td.dart';
 import 'td_receiver.dart';
+import 'package:path_provider/path_provider.dart';
 
 class AppController extends ChangeNotifier {
   final TdLibService tdLibService = TdLibService();
@@ -34,12 +35,17 @@ class AppController extends ChangeNotifier {
       }
       tdLibService.setLogVerbLvl(2);
 
-      final dir = Directory('./td_db');
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
+      final appDir = await getApplicationDocumentsDirectory();
+      final dbDir = Directory('${appDir.path}/td_db');
+      if (!await dbDir.exists()) {
+        await dbDir.create(recursive: true);
       }
 
-      final tdlibParams = tdLibService.getTdlibParameters();
+      final tdlibParams = {
+        ...tdLibService.getTdlibParameters(),
+        'database_directory': dbDir.path,
+        'files_directory': '${appDir.path}/td_files',
+      };
       tdLibService.send(tdlibParams);
       setStatus('Отправили параметры TDLib');
 
