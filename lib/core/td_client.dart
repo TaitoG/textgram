@@ -152,12 +152,12 @@ class TdLibService {
       'use_chat_info_database': true,
       'use_message_database': true,
       'use_secret_chats': true,
-      'api_id': REMOVED,
-      'REMOVED': 'REMOVED',
+      'api_id': API_ID,
+      'REMOVED': API_HASH,
       'system_language_code': 'en',
       'device_model': 'Textgram',
       'system_version': 'Android',
-      'application_version': '0.0.4',
+      'application_version': '0.0.5',
       'enable_storage_optimizer': true
     };
   }
