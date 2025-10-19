@@ -77,12 +77,12 @@ tdlib = DynamicLibrary.open('path/to/libtdjson.so');
 
 Visit [my.telegram.org](https://my.telegram.org) and create an app to get:
 - `api_id`
-- `REMOVED`
+- `api_hash`
 
 Update them in `td_client.dart`:
 ```dart
 'api_id': YOUR_API_ID,
-'REMOVED': 'YOUR_API_HASH',
+'api_hash': 'YOUR_API_HASH',
 ```
 
 5. **Run the app**
