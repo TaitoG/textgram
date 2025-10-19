@@ -29,9 +29,9 @@ class ChatListScreen extends StatelessWidget {
       final minute = messageDate.minute.toString().padLeft(2, '0');
       return '$hour:$minute';
     } else if (messageDay == yesterday) {
-      return 'вчера';
+      return 'yesterday';
     } else if (now.difference(messageDate).inDays < 7) {
-      const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
       return weekdays[(messageDate.weekday % 7)];
     } else {
       final day = messageDate.day.toString().padLeft(2, '0');
@@ -48,16 +48,25 @@ class ChatListScreen extends StatelessWidget {
       if (chatType == 'supergroup')
         MenuAction(
           icon: '⛔',
-          label: 'ПОКИНУТЬ ГРУППУ',
+          label: 'LEAVE',
           color: terminalGreen,
           onTap: (ctx) {
             final appController = Provider.of<AppController>(ctx, listen: false);
             appController.tdLibService.leaveChat(chatId);
           },
         ),
+        MenuAction(
+          icon: '>',
+          label: 'INFO',
+          color: terminalGreen,
+          onTap: (ctx) {
+            final appController = Provider.of<AppController>(ctx, listen: false);
+            appController.openProfile(chat);
+          },
+        ),
       MenuAction(
         icon: '>',
-        label: 'УДАЛИТЬ ЧАТ',
+        label: 'DELETE',
         color: Colors.red[400]!,
         onTap: (ctx) {
           final appController = Provider.of<AppController>(ctx, listen: false);
@@ -67,7 +76,7 @@ class ChatListScreen extends StatelessWidget {
       ),
     ];
 
-    MessageMenu.show(context, actions, title: '[ ДЕЙСТВИЯ ]');
+    MessageMenu.show(context, actions, title: '[ ACTIONS ]');
   }
 
   @override

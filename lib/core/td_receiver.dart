@@ -1,4 +1,5 @@
-//td_receiver.dart
+// td_receiver.dart
+import 'dart:async';
 import '/core/td.dart';
 import 'app_controller.dart';
 import '/models/models.dart';
@@ -6,18 +7,39 @@ import '/models/models.dart';
 class TDReceiver {
   final TdLibService tdLibService;
   final AppController app;
+  StreamSubscription? _subscription;
+
+  final Set<int> _processedChatIds = {};
+
+  Timer? _chatsUpdateTimer;
+  bool _needsChatsUpdate = false;
 
   TDReceiver(this.tdLibService, this.app);
 
-  void startListening(Map<String, dynamic> tdlibParams) async {
-    await for (final data in tdLibService.startReceiver()) {
-      _handleUpdate(data, tdlibParams);
-    }
+  void startListening(Map<String, dynamic> tdlibParams) {
+    _subscription?.cancel();
+
+    _subscription = tdLibService.startReceiver().listen(
+          (data) => _handleUpdate(data, tdlibParams),
+      onError: (error) {
+        print('❌ Ошибка в потоке обновлений: $error');
+      },
+      onDone: () {
+        print('✅ Поток обновлений завершён');
+      },
+    );
+  }
+
+  void stopListening() {
+    _subscription?.cancel();
+    _chatsUpdateTimer?.cancel();
   }
 
   void _handleUpdate(Map<String, dynamic> data, Map<String, dynamic> tdlibParams) {
     try {
       final type = data['@type'];
+      if (type == null) return;
+
       switch (type) {
         case 'updateAuthorizationState':
           _handleAuthorizationState(data, tdlibParams);
@@ -29,7 +51,7 @@ class TDReceiver {
           _updateChatLastMessage(data['chat_id'], data['last_message']);
           break;
         case 'updateChatPosition':
-          tdLibService.loadChats();
+          _scheduleChatsUpdate();
           break;
         case 'updateNewMessage':
           _handleNewMessage(data['message']);
@@ -52,43 +74,69 @@ class TDReceiver {
         case 'message':
           _handleSingleMessage(data);
           break;
+        case 'chat':
+          _addOrUpdateChat(data);
+          break;
+        case 'error':
+          _handleError(data);
+          break;
       }
-    } catch (e) {
-      print('Ошибка обработки обновления: $e');
-      print('Данные: $data');
+    } catch (e, stackTrace) {
+      print('❌ Ошибка обработки обновления: $e');
+      print('Стек: $stackTrace');
+      print('Данные: ${data.toString().substring(0, data.toString().length > 500 ? 500 : data.toString().length)}');
     }
   }
 
+  void _scheduleChatsUpdate() {
+    _needsChatsUpdate = true;
+    _chatsUpdateTimer?.cancel();
+
+    _chatsUpdateTimer = Timer(const Duration(milliseconds: 500), () {
+      if (_needsChatsUpdate) {
+        tdLibService.loadChats(limit: 20);
+        _needsChatsUpdate = false;
+      }
+    });
+  }
+
   void _handleAuthorizationState(Map<String, dynamic> data, Map<String, dynamic> tdlibParams) {
-    final state = data['authorization_state']['@type'];
+    final authState = data['authorization_state'];
+    if (authState == null) return;
+
+    final state = authState['@type'];
 
     switch (state) {
       case 'authorizationStateWaitPhoneNumber':
         app.setState(AppState.waitingPhone);
-        app.setStatus('Введите номер телефона');
+        app.setStatus('Enter phone number..._');
         break;
       case 'authorizationStateWaitCode':
         app.setState(AppState.waitingCode);
-        app.setStatus('Введите код из Telegram');
+        app.setStatus('Enter code from Telegram..._');
         break;
       case 'authorizationStateWaitPassword':
-        final hint = data['authorization_state']['password_hint'] ?? '';
+        final hint = authState['password_hint'] ?? '';
         app.setState(AppState.waitingPassword);
-        app.setStatus('Введите пароль${hint.isNotEmpty ? " (подсказка: $hint)" : ""}');
+        app.setStatus('Enter password${hint.isNotEmpty ? " (hint: $hint)" : ""}');
         break;
       case 'authorizationStateReady':
         app.setState(AppState.chatList);
-        app.setStatus('✅ Успешно вошли!');
-        tdLibService.loadChats();
+        app.setStatus('✅ Logged in!');
+        tdLibService.loadChats(limit: 20);
         break;
       case 'authorizationStateClosed':
-        app.setStatus('Соединение закрыто');
+        app.setStatus('Connection closed.');
+        break;
+      case 'authorizationStateLoggingOut':
+        app.setStatus('Sign out...');
         break;
     }
   }
 
   void _handleNewMessage(Map<String, dynamic>? message) {
     if (message == null) return;
+
     final chatId = message['chat_id'];
     if (chatId == null) return;
 
@@ -99,8 +147,8 @@ class TDReceiver {
     final sender = message['sender_id'];
     if (sender != null && sender['@type'] == 'messageSenderUser') {
       final userId = sender['user_id'];
-      if (!app.users.containsKey(userId)) {
-        tdLibService.loadUser(userId);
+      if (userId != null) {
+        app.loadUserIfNeeded(userId);
       }
     }
 
@@ -112,6 +160,8 @@ class TDReceiver {
     final messageId = data['message_id'];
     final newContent = data['new_content'];
 
+    if (chatId == null || messageId == null || newContent == null) return;
+
     if (app.selectedChat != null && chatId == app.selectedChat!.id) {
       app.updateMessageContent(messageId, newContent);
     }
@@ -121,102 +171,158 @@ class TDReceiver {
     final chatId = data['chat_id'];
     final messageIdsList = data['message_ids'];
 
+    if (chatId == null || messageIdsList == null) return;
+
     if (app.selectedChat != null && chatId == app.selectedChat!.id && messageIdsList is List) {
-      app.deleteMessages(messageIdsList.cast<int>());
+      final idsToDelete = messageIdsList.cast<int>();
+      for (var id in idsToDelete) {
+        app.messagesMap.remove(id);
+        app.messageIdsSet.remove(id);
+        app.messageIdsList.remove(id);
+      }
+      app.notifyListeners();
     }
   }
 
   void _handleMessagesHistory(List? messagesList) {
-    if (messagesList == null || messagesList.isEmpty || app.selectedChat == null) return;
+    if (messagesList == null || messagesList.isEmpty || app.selectedChat == null) {
+      app.isLoadingHistory = false;
+      app.hasMoreHistory = false;
+      return;
+    }
 
     final newMessagesMap = <int, Map<String, dynamic>>{};
     final newMessageIds = <int>[];
+    final userIdsToLoad = <int>{};
 
     for (var msg in messagesList) {
-      if (msg is Map<String, dynamic>) {
-        final msgId = msg['id'];
-        if (msgId != null) {
-          newMessagesMap[msgId] = msg;
-          newMessageIds.add(msgId);
+      if (msg is! Map<String, dynamic>) continue;
+
+      final msgId = msg['id'];
+      if (msgId == null) continue;
+
+      newMessagesMap[msgId] = msg;
+      newMessageIds.add(msgId);
+
+      final sender = msg['sender_id'];
+      if (sender != null && sender['@type'] == 'messageSenderUser') {
+        final userId = sender['user_id'];
+        if (userId != null && !app.users.containsKey(userId)) {
+          userIdsToLoad.add(userId);
         }
       }
     }
 
     app.updateMessages(newMessagesMap, newMessageIds);
 
-    for (var msg in messagesList) {
-      if (msg is Map<String, dynamic>) {
-        final sender = msg['sender_id'];
-        if (sender != null && sender['@type'] == 'messageSenderUser') {
-          final userId = sender['user_id'];
-          if (!app.users.containsKey(userId)) {
-            tdLibService.loadUser(userId);
-          }
-        }
-      }
+    for (var userId in userIdsToLoad) {
+      app.loadUserIfNeeded(userId);
     }
   }
 
   void _handleUser(Map<String, dynamic> data) {
     final id = data['id'];
-    final name = '${data['first_name'] ?? ''} ${data['last_name'] ?? ''}'.trim();
-    final newName = name.isEmpty ? 'User$id' : name;
-    app.users[id] = newName;
+    if (id == null) return;
+
+    final firstName = data['first_name'] ?? '';
+    final lastName = data['last_name'] ?? '';
+    final username = data['username'] ?? '';
+
+    String name = '$firstName $lastName'.trim();
+    if (name.isEmpty && username.isNotEmpty) {
+      name = '@$username';
+    }
+    if (name.isEmpty) {
+      name = 'User$id';
+    }
+
+    app.users[id] = name;
+    app.onUserLoaded(id);
     app.notifyListeners();
   }
 
   void _handleSingleMessage(Map<String, dynamic> data) {
     final msgId = data['id'];
-    if (msgId != null && app.selectedChat != null && data['chat_id'] == app.selectedChat!.id) {
+    final chatId = data['chat_id'];
+
+    if (msgId == null || chatId == null) return;
+
+    if (app.selectedChat != null && chatId == app.selectedChat!.id) {
       app.addMessage(data);
     }
   }
 
   void _handleSupergroupUpdate(Map<String, dynamic> data) {
-    final s = data['supergroup']['status']['@type'];
-    final cid = data['supergroup']['id'];
-    final normalizedId = (-100 * 10000000000 - cid).toInt();
+    final supergroup = data['supergroup'];
+    if (supergroup == null) return;
 
-    final index = app.chatsStatus.indexWhere((c) => c.chat_id == cid);
-    final chat = ChatStatus(chat_id: normalizedId, status: s);
+    final status = supergroup['status'];
+    final id = supergroup['id'];
+
+    if (status == null || id == null) return;
+
+    final statusType = status['@type'];
+
+    final normalizedId = -1000000000000 - id;
+
+    final index = app.chatsStatus.indexWhere((c) => c.chat_id == normalizedId.toInt());
+    final chat = ChatStatus(chat_id: normalizedId.toInt(), status: statusType);
 
     if (index >= 0) {
       app.chatsStatus[index] = chat;
     } else {
       app.chatsStatus.add(chat);
     }
+
+    if (statusType == 'chatMemberStatusLeft' || statusType == 'chatMemberStatusBanned') {
+      app.deleteChatFromList(normalizedId.toInt());
+    }
+
     app.notifyListeners();
   }
 
-  bool _isChatMember(int chat_id) {
-    return app.isChatMember(chat_id);
+  void _handleError(Map<String, dynamic> data) {
+    final code = data['code'] ?? 0;
+    final message = data['message'] ?? 'Unknown error';
+    print('⚠️ TDLib Error [$code]: $message');
+
+    if (code == 401) {
+      app.setState(AppState.waitingPhone);
+      app.setStatus('Need to log in');
+    }
   }
 
-  void _addOrUpdateChat(Map<String, dynamic> chatData) {
+  bool _isChatMember(int chatId) {
+    return app.isChatMember(chatId);
+  }
+
+  void _addOrUpdateChat(Map<String, dynamic>? chatData) {
+    if (chatData == null) return;
+
     try {
       final id = chatData['id'];
       if (id == null) return;
 
-      if (chatData['type']['@type'] == 'chatTypeSupergroup' && !_isChatMember(id)) return;
+      final chatType = chatData['type'];
+      if (chatType == null) return;
 
-      final title = chatData['title'] ?? 'Без названия';
-      String lastMsg = 'Нет сообщений';
+      if (chatType['@type'] == 'chatTypeSupergroup' && !_isChatMember(id)) {
+        return;
+      }
+
+      final title = chatData['title'] ?? 'Noname';
+      String lastMsg = 'No messages';
       int lastMsgDate = 0;
 
-      if (chatData['last_message'] != null) {
-        lastMsgDate = chatData['last_message']['date'] ?? 0;
-        final content = chatData['last_message']['content'];
-        if (content != null) {
-          if (content['@type'] == 'messageText') {
-            lastMsg = content['text']?['text'] ?? '';
-          } else {
-            lastMsg = content['@type']?.toString().replaceAll('message', '') ?? 'Медиа';
-          }
-        }
+      final lastMessage = chatData['last_message'];
+      if (lastMessage != null) {
+        lastMsgDate = (lastMessage['date'] ?? 0).toInt();
+        lastMsg = _extractMessageText(lastMessage);
       }
 
       final newChats = List<Chat>.from(app.chats);
       final index = newChats.indexWhere((c) => c.id == id);
+
       final chat = Chat(
           id: id,
           title: title,
@@ -228,11 +334,17 @@ class TDReceiver {
         newChats[index] = chat;
       } else {
         newChats.add(chat);
+        _processedChatIds.add(id);
       }
-      newChats.sort((a, b) => b.lastMessageDate.compareTo(a.lastMessageDate));
+
+      if (index < 0 || (index > 0 && newChats[index].lastMessageDate > newChats[index - 1].lastMessageDate)) {
+        newChats.sort((a, b) => b.lastMessageDate.compareTo(a.lastMessageDate));
+      }
+
       app.updateChats(newChats);
-    } catch (e) {
-      print('Ошибка при добавлении чата: $e');
+    } catch (e, stackTrace) {
+      print('❌ Ошибка при добавлении чата: $e');
+      print('Стек: $stackTrace');
     }
   }
 
@@ -240,19 +352,80 @@ class TDReceiver {
     if (lastMessage == null) return;
 
     try {
-      String lastMsg = 'Сообщение';
-      int lastMsgDate = lastMessage['date'] ?? 0;
-      final content = lastMessage['content'];
-      if (content != null) {
-        if (content['@type'] == 'messageText') {
-          lastMsg = content['text']?['text'] ?? '';
-        } else {
-          lastMsg = content['@type']?.toString().replaceAll('message', '') ?? 'Медиа';
-        }
-      }
+      final lastMsgDate = (lastMessage['date'] ?? 0).toInt();
+      final lastMsg = _extractMessageText(lastMessage);
+
       app.updateChatLastMessage(chatId, lastMsg, lastMsgDate);
     } catch (e) {
-      print('Ошибка при обновлении сообщения чата: $e');
+      print('❌ Ошибка при обновлении сообщения чата: $e');
     }
+  }
+
+  String _extractMessageText(Map<String, dynamic> message) {
+    final content = message['content'];
+    if (content == null) return '[Message]';
+
+    final contentType = content['@type'];
+
+    switch (contentType) {
+      case 'messageText':
+        final text = content['text'];
+        if (text != null && text['text'] != null) {
+          return text['text'].toString();
+        }
+        return '[Text]';
+
+      case 'messagePhoto':
+        final caption = content['caption'];
+        if (caption != null && caption['text'] != null && caption['text'].toString().isNotEmpty) {
+          return '[Photo] ${caption['text']}';
+        }
+        return '[Photo]';
+
+      case 'messageVideo':
+        return '[Video]';
+
+      case 'messageVoiceNote':
+        return '[Voice]';
+
+      case 'messageAudio':
+        return '[Audio]';
+
+      case 'messageDocument':
+        final doc = content['document'];
+        final fileName = doc?['file_name'] ?? 'файл';
+        return '[File] $fileName';
+
+      case 'messageSticker':
+        final emoji = content['sticker']?['emoji'] ?? '';
+        return '[$emoji Sticker]';
+
+      case 'messageAnimation':
+        return '[GIF]';
+
+      case 'messageLocation':
+        return '[Location]';
+
+      case 'messageContact':
+        return '[Contact]';
+
+      case 'messagePoll':
+        final question = content['poll']?['question'] ?? 'Опрос';
+        return '[Poll] $question';
+
+      case 'messageVideoNote':
+        return '[VideoNote]';
+
+      case 'messageCall':
+        return '[Call]';
+
+      default:
+        return contentType.toString().replaceFirst('message', '');
+    }
+  }
+
+  void dispose() {
+    stopListening();
+    _chatsUpdateTimer?.cancel();
   }
 }

@@ -11,6 +11,7 @@ class ChatScreen extends StatefulWidget {
   final Function(String) onSendMessage;
   final Function(int) onLongPressMessage;
   final VoidCallback onCancelReply;
+  final VoidCallback? onLoadMore;
 
   final Function(int, String)? onEditMessage;
   final Function(int)? onDeleteMessage;
@@ -26,6 +27,7 @@ class ChatScreen extends StatefulWidget {
     required this.onCancelReply,
     this.onEditMessage,
     this.onDeleteMessage,
+    this.onLoadMore,
   }) : super(key: key);
 
   @override
@@ -34,7 +36,6 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController messageController = TextEditingController();
-  final AppController appController = AppController();
   final FocusNode _focusNode = FocusNode();
   int? _editingMessageId;
 
@@ -49,6 +50,18 @@ class _ChatScreenState extends State<ChatScreen> {
       final type = content['@type']?.toString().replaceAll('message', '') ?? '';
       return '[${type}] ${caption}';
     }
+  }
+  String _getMessageTime(Map<String, dynamic> msg) {
+    final date = msg['date'];
+    if (date == null) return '';
+    final now = DateTime.now();
+    final msgTime = DateTime.fromMillisecondsSinceEpoch(date * 1000);
+    final diff = now.difference(msgTime);
+
+    if (diff.inDays > 0) {
+      return '${msgTime.day}/${msgTime.month} ${msgTime.hour.toString().padLeft(2, '0')}:${msgTime.minute.toString().padLeft(2, '0')}';
+    }
+    return '${msgTime.hour.toString().padLeft(2, '0')}:${msgTime.minute.toString().padLeft(2, '0')}';
   }
 
   bool _isInviteLink(String text) {
@@ -284,6 +297,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   reverse: true,
                   itemCount: widget.messageIds.length,
                   itemBuilder: (context, index) {
+                    if (index == 0 && widget.onLoadMore != null) {
+                      widget.onLoadMore!();
+                    }
                     final msgId = widget.messageIds[index];
                     final msg = widget.messagesMap[msgId];
                     if (msg == null) return SizedBox.shrink();
@@ -326,7 +342,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             children: [
                               if (!isOutgoing)
                                 Text(
-                                  '> ${widget.users[(msg['sender_id']?['user_id'] ?? 0)] ?? 'USER'}',
+                                  '> ${widget.users[(msg['sender_id']?['user_id'] ?? 0)] ?? 'USER'}·${_getMessageTime(msg)}',
                                   style: TextStyle(
                                     fontFamily: 'JetBrains',
                                     fontSize: 10,
@@ -422,6 +438,14 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (widget.onLoadMore != null) widget.onLoadMore!();
+    });
   }
 
   @override

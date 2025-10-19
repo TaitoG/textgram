@@ -7,4 +7,5 @@ enum AppState {
   waitingPassword,
   chatList,
   chat,
+  profile
 }

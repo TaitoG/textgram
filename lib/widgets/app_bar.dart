@@ -43,7 +43,7 @@ class AppBarWidget extends StatelessWidget implements PreferredSizeWidget {
           ),
         ],
       ),
-      leading: app.appState == AppState.chat
+      leading: (app.appState == AppState.chat || app.appState == AppState.profile)
           ? IconButton(
         icon: Text(
           '<',

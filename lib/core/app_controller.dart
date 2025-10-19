@@ -1,5 +1,6 @@
 // core/app_controller.dart
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:textgram/models/models.dart';
 import 'package:textgram/pages/pages.dart';
@@ -19,8 +20,19 @@ class AppController extends ChangeNotifier {
   Chat? selectedChat;
 
   Map<int, Map<String, dynamic>> messagesMap = {};
-  List<int> messageIds = [];
+  Set<int> messageIdsSet = {};
+  List<int> messageIdsList = [];
   int? replyToMessageId;
+
+  Timer? _notifyTimer;
+  bool _hasPendingNotification = false;
+
+  bool isLoadingHistory = false;
+  bool hasMoreHistory = true;
+  int? oldestMessageId;
+
+  Set<int> _loadingUsers = {};
+  Set<int> _loadedChats = {};
 
   AppController() {
     tdReceiver = TDReceiver(tdLibService, this);
@@ -55,7 +67,17 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  // Публичные методы
+  void _scheduleNotification() {
+    _hasPendingNotification = true;
+    _notifyTimer?.cancel();
+    _notifyTimer = Timer(const Duration(milliseconds: 50), () {
+      if (_hasPendingNotification) {
+        notifyListeners();
+        _hasPendingNotification = false;
+      }
+    });
+  }
+
   void setState(AppState newState) {
     appState = newState;
     notifyListeners();
@@ -63,6 +85,12 @@ class AppController extends ChangeNotifier {
 
   void setStatus(String newStatus) {
     status = newStatus;
+    _scheduleNotification();
+  }
+
+  void openProfile(Chat chat) {
+    selectedChat = chat;
+    setState(AppState.profile);
     notifyListeners();
   }
 
@@ -70,14 +98,19 @@ class AppController extends ChangeNotifier {
     selectedChat = chat;
     setState(AppState.chat);
     messagesMap.clear();
-    messageIds.clear();
+    messageIdsSet.clear();
+    messageIdsList.clear();
     replyToMessageId = null;
-    tdLibService.loadChatHistory(chat.id);
+    hasMoreHistory = true;
+    oldestMessageId = null;
+    isLoadingHistory = false;
+
+    tdLibService.loadChatHistory(chat.id, limit: 50);
     notifyListeners();
   }
 
   void sendMessage(String text) {
-    if (selectedChat == null || text.isEmpty) return;
+    if (selectedChat == null || text.trim().isEmpty) return;
     tdLibService.sendMessage(
       selectedChat!.id,
       text,
@@ -91,8 +124,11 @@ class AppController extends ChangeNotifier {
     setState(AppState.chatList);
     selectedChat = null;
     messagesMap.clear();
-    messageIds.clear();
+    messageIdsSet.clear();
+    messageIdsList.clear();
     replyToMessageId = null;
+    hasMoreHistory = true;
+    oldestMessageId = null;
     notifyListeners();
   }
 
@@ -105,6 +141,8 @@ class AppController extends ChangeNotifier {
         return 'Textgram';
       case AppState.chatList:
         return 'Chats';
+      case AppState.profile:
+        return 'Profile';
       case AppState.chat:
         return selectedChat?.title ?? 'Chat';
     }
@@ -128,54 +166,106 @@ class AppController extends ChangeNotifier {
           chats: chats,
           onChatTap: openChat,
         );
+      case AppState.profile:
+        return ProfileScreen(chat: selectedChat!);
       case AppState.chat:
-        return ChatScreen(
-          messageIds: messageIds,
-          messagesMap: messagesMap,
-          users: users,
-          replyToMessageId: replyToMessageId,
-          onSendMessage: sendMessage,
-          onLongPressMessage: (msgId) => replyToMessageId = msgId,
-          onCancelReply: () => replyToMessageId = null,
-          onEditMessage: (msgId, txt) =>
-              tdLibService.editMsg(selectedChat!.id, msgId, txt),
-          onDeleteMessage: (msgId) => deleteMessages([msgId])
+        return ListenableBuilder(
+          listenable: this,
+          builder: (context, child) {
+            return ChatScreen(
+              messageIds: messageIdsList,
+              messagesMap: messagesMap,
+              users: users,
+              replyToMessageId: replyToMessageId,
+              onSendMessage: sendMessage,
+              onLongPressMessage: (msgId) {
+                replyToMessageId = msgId;
+                notifyListeners();
+              },
+              onCancelReply: () {
+                replyToMessageId = null;
+                notifyListeners();
+              },
+              onEditMessage: (msgId, txt) =>
+                  tdLibService.editMsg(selectedChat!.id, msgId, txt),
+              onDeleteMessage: (msgId) => deleteMessages([msgId]),
+              onLoadMore: loadMoreHistory,
+            );
+          },
         );
     }
   }
 
+  void loadMoreHistory() {
+    if (selectedChat == null || isLoadingHistory || !hasMoreHistory) return;
+
+    isLoadingHistory = true;
+    notifyListeners();
+
+    tdLibService.loadChatHistory(
+      selectedChat!.id,
+      fromMessageId: oldestMessageId ?? 0,
+      limit: 50,
+      offset: 0,
+    );
+  }
+
   void updateChats(List<Chat> newChats) {
     chats = newChats;
-    notifyListeners();
+    _scheduleNotification();
   }
 
   void updateUsers(Map<int, String> newUsers) {
     users = newUsers;
-    notifyListeners();
+    _scheduleNotification();
   }
 
   void updateSelectedChat(Chat? chat) {
     selectedChat = chat;
-    notifyListeners();
+    _scheduleNotification();
   }
 
   void updateMessages(Map<int, Map<String, dynamic>> newMessages, List<int> newMessageIds) {
-    messagesMap = newMessages;
-    messageIds = newMessageIds;
-    notifyListeners();
+    messagesMap.addAll(newMessages);
+
+    for (var id in newMessageIds) {
+      if (!messageIdsSet.contains(id)) {
+        messageIdsSet.add(id);
+      }
+    }
+
+    messageIdsList = messageIdsSet.toList()..sort((a, b) => b.compareTo(a));
+
+    if (messageIdsList.isNotEmpty) {
+      oldestMessageId = messageIdsList.last;
+    }
+
+    isLoadingHistory = false;
+
+    if (newMessageIds.length < 50) {
+      hasMoreHistory = false;
+    }
+
+    _scheduleNotification();
   }
 
   void updateChatLastMessage(int chatId, String lastMsg, int lastMsgDate) {
     final index = chats.indexWhere((c) => c.id == chatId);
-    if (index >= 0 && chats.isNotEmpty) {
-      chats[index] = Chat(
+    if (index >= 0) {
+      final updatedChat = Chat(
         id: chatId,
         title: chats[index].title,
         lastMessage: lastMsg,
         lastMessageDate: lastMsgDate,
       );
-      chats.sort((a, b) => b.lastMessageDate.compareTo(a.lastMessageDate));
-      notifyListeners();
+
+      chats[index] = updatedChat;
+
+      if (index > 0 && chats[index].lastMessageDate > chats[index - 1].lastMessageDate) {
+        chats.sort((a, b) => b.lastMessageDate.compareTo(a.lastMessageDate));
+      }
+
+      _scheduleNotification();
     }
   }
 
@@ -184,26 +274,32 @@ class AppController extends ChangeNotifier {
     if (msgId == null) return;
 
     messagesMap[msgId] = message;
-    if (!messageIds.contains(msgId)) {
-      messageIds.insert(0, msgId);
+
+    if (!messageIdsSet.contains(msgId)) {
+      messageIdsSet.add(msgId);
+      messageIdsList.insert(0, msgId);
     }
-    notifyListeners();
+
+    _scheduleNotification();
   }
 
   void deleteMessages(List<int> messageIdsToDelete) {
+    if (messageIdsToDelete.isEmpty || selectedChat == null) return;
+
     for (var msgId in messageIdsToDelete) {
       messagesMap.remove(msgId);
-      messageIds.remove(msgId);
-
-      tdLibService.deleteMsg(selectedChat!.id, [msgId]);
+      messageIdsSet.remove(msgId);
+      messageIdsList.remove(msgId);
     }
-    notifyListeners();
+    tdLibService.deleteMsg(selectedChat!.id, messageIdsToDelete);
+
+    _scheduleNotification();
   }
 
   void updateMessageContent(int messageId, Map<String, dynamic> newContent) {
     if (messagesMap.containsKey(messageId)) {
       messagesMap[messageId]!['content'] = newContent;
-      notifyListeners();
+      _scheduleNotification();
     }
   }
 
@@ -215,7 +311,8 @@ class AppController extends ChangeNotifier {
 
   void deleteChatFromList(int chatId) {
     chats.removeWhere((chat) => chat.id == chatId);
-    notifyListeners();
+    _loadedChats.remove(chatId);
+    _scheduleNotification();
   }
 
   void joinChatByInvite(String url) {
@@ -223,8 +320,21 @@ class AppController extends ChangeNotifier {
     setStatus('> Присоединяемся к чату...');
   }
 
+  void loadUserIfNeeded(int userId) {
+    if (!users.containsKey(userId) && !_loadingUsers.contains(userId)) {
+      _loadingUsers.add(userId);
+      tdLibService.loadUser(userId);
+    }
+  }
+
+  void onUserLoaded(int userId) {
+    _loadingUsers.remove(userId);
+  }
+
   @override
   void dispose() {
+    _notifyTimer?.cancel();
+    tdLibService.stopReceiver();
     tdLibService.destroy();
     super.dispose();
   }
